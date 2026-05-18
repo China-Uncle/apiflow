@@ -23,3 +23,12 @@ AGENTS.md
 
 # Codex temporary artifacts
 .codex_tmp/
+
+# Local docker compose override
+docker-compose.local.yml
+
+# Deploy info
+apiflow-deploy-info.md
+
+# AI tool config
+opencode.json

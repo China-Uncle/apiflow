@@ -108,6 +108,10 @@ export default (): MidwayConfig => {
     },
     validate: {
       errorStatus: 200,
+      validationOptions: {
+        allowUnknown: true,
+        stripUnknown: true,
+      },
     },
     ossConfig: {
       client: {

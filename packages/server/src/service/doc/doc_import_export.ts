@@ -1158,6 +1158,9 @@ export class DocImportAndExportService {
       docInfo.projectId = projectId;
       docInfo._id = newId;
       docInfo.isFolder = isFolder;
+      if (docInfo.info) {
+        docInfo.info.creator = this.ctx.tokenInfo?.loginName || '';
+      }
       if (!isFolder && docInfo.item) {
         docInfo.item.method = (docInfo.item.method?.toUpperCase() as RequestMethod) || 'GET';
       }
