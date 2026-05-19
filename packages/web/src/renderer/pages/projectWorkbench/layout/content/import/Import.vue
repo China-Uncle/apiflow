@@ -301,8 +301,10 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
     }
     const httpDoc = doc as HttpNode
     const key = normalizeUrl(httpDoc.item.url.prefix || '', httpDoc.item.url.path)
-    const mapKey = `${httpDoc.item.method}:${key}`
-    const existingId = urlMap.get(mapKey)
+    const mapKey = `${httpDoc.item.method.toUpperCase()}:${key}`
+    // 也尝试不带 prefix 匹配（doc_tree_node 返回的 url 不包含 prefix）
+    const pathOnlyKey = `${httpDoc.item.method.toUpperCase()}:${normalizeUrl('', httpDoc.item.url.path)}`
+    const existingId = urlMap.get(mapKey) || urlMap.get(pathOnlyKey)
     if (existingId) {
       if (strategy === 'skip') continue
       if (strategy === 'overwrite') deleteIds.push(existingId)
