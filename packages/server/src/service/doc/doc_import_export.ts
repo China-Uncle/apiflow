@@ -1152,8 +1152,13 @@ export class DocImportAndExportService {
       })
       const isFolder = docInfo.isFolder ?? (docInfo.info?.type === 'folder');
       const requestUrl = docInfo.item?.url as { host?: string; prefix?: string } | undefined;
-      if (requestUrl && !requestUrl.host && requestUrl.prefix) {
-        requestUrl.host = requestUrl.prefix;
+      if (requestUrl) {
+        if (!requestUrl.host && requestUrl.prefix) {
+          requestUrl.host = requestUrl.prefix;
+        }
+        if (!requestUrl.prefix && requestUrl.host) {
+          requestUrl.prefix = requestUrl.host;
+        }
       }
       docInfo.projectId = projectId;
       docInfo._id = newId;
