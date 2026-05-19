@@ -1139,7 +1139,7 @@ export class DocImportAndExportService {
    * 导入apiflow格式文档
    */
   async importApiflow(params: ImportApiflowDto) {
-    const { projectId, cover, moyuData } = params;
+    const { projectId, cover, moyuData, deleteIds } = params;
     await this.commonControl.checkDocOperationPermissions(projectId);
     const { docs = [], hosts = [] } = moyuData;
     const convertDocs = docs.map((docInfo) => {
@@ -1179,6 +1179,12 @@ export class DocImportAndExportService {
     if (cover) {
       await this.docModel.updateMany({ projectId }, { $set: { isEnabled: false } })
       await this.docPrefixModel.updateMany({ projectId }, { $set: { isEnabled: false } });
+    }
+    if (deleteIds?.length > 0) {
+      await this.docModel.updateMany(
+        { _id: { $in: deleteIds }, projectId },
+        { $set: { isEnabled: false } }
+      );
     }
     await this.docPrefixModel.create(convertHosts);
     await this.docModel.create(convertDocs)

@@ -113,6 +113,13 @@
             <el-radio :value="true">{{ t('覆盖方式') }}</el-radio>
           </el-radio-group>
         </SConfig>
+        <SConfig v-if="!formInfo.cover" :has-check="false" :label="t('URL重复处理')" :description="t('追加模式下遇到URL重复时的处理方式')">
+          <el-radio-group v-model="duplicateStrategy">
+            <el-radio value="skip">{{ t('跳过') }}</el-radio>
+            <el-radio value="overwrite">{{ t('覆盖') }}</el-radio>
+            <el-radio value="add">{{ t('新增') }}</el-radio>
+          </el-radio-group>
+        </SConfig>
         <SConfig
           :label="t('目标目录')"
           :description="t('选择需要挂载的节点，不选择则默认挂载到根目录')"
@@ -220,6 +227,59 @@ const loading = ref(false)
 const loading2 = ref(false)
 // OpenAPI 文件夹命名方式
 const openapiFolderNamedType: Ref<OpenApiFolderNamedType> = ref('tag')
+// URL 重复处理策略
+const duplicateStrategy: Ref<'skip' | 'overwrite' | 'add'> = ref('skip')
+// URL 规范化（用于去重比较）
+const normalizeUrl = (prefix: string, path: string): string => {
+  const p = (prefix || '').replace(/\/+$/, '').toLowerCase()
+  const q = (path || '').replace(/^\/+|\/+$/g, '').toLowerCase()
+  return `${p}/${q}`
+}
+// URL 去重预处理（获取已有节点，按策略处理）
+const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
+  filteredDocs: (HttpNode | FolderNode)[]
+  deleteIds: string[]
+}> => {
+  const strategy = duplicateStrategy.value
+  if (strategy === 'add') return { filteredDocs: docs, deleteIds: [] }
+
+  const httpDocs = docs.filter((d): d is HttpNode => 'item' in d)
+  if (httpDocs.length === 0) return { filteredDocs: docs, deleteIds: [] }
+
+  let existingNodes: (HttpNode | FolderNode)[] = []
+  if (isStandalone.value) {
+    existingNodes = await apiNodesCache.getNodesByProjectId(projectId)
+  } else {
+    const res = await request.get('/api/project/doc_tree_node', { params: { projectId } })
+    existingNodes = res.data || []
+  }
+
+  const existingHttp = existingNodes.filter((n): n is HttpNode => 'item' in n && n.item.url)
+  const urlMap = new Map<string, string>()
+  for (const n of existingHttp) {
+    const key = normalizeUrl(n.item.url.prefix || n.item.url.host || '', n.item.url.path)
+    urlMap.set(`${n.item.method}:${key}`, n._id)
+  }
+
+  const deleteIds: string[] = []
+  const filteredDocs: (HttpNode | FolderNode)[] = []
+  for (const doc of docs) {
+    if (!('item' in doc)) {
+      filteredDocs.push(doc)
+      continue
+    }
+    const httpDoc = doc as HttpNode
+    const key = normalizeUrl(httpDoc.item.url.prefix || '', httpDoc.item.url.path)
+    const mapKey = `${httpDoc.item.method}:${key}`
+    const existingId = urlMap.get(mapKey)
+    if (existingId) {
+      if (strategy === 'skip') continue
+      if (strategy === 'overwrite') deleteIds.push(existingId)
+    }
+    filteredDocs.push(doc)
+  }
+  return { filteredDocs, deleteIds }
+}
 // 表单信息
 const formInfo: Ref<FormInfo> = ref({
   moyuData: { docs: [] },
@@ -403,8 +463,22 @@ const handleSubmit = async () => {
       message.warning(t('请选择需要导入的文件'))
       return
     }
+
+    // URL 去重预处理（追加模式下）
+    let deleteIds: string[] = []
+    let submitDocs = formInfo.value.moyuData.docs
+    if (!formInfo.value.cover && duplicateStrategy.value !== 'add') {
+      const result = await dedupDocs(submitDocs)
+      submitDocs = result.filteredDocs
+      deleteIds = result.deleteIds
+      if (submitDocs.length === 0) {
+        message.info(t('没有需要导入的新接口'))
+        return
+      }
+    }
+
     const mountedId = currentMountedNode.value?._id
-    const docs = formInfo.value.moyuData.docs.map(val => {
+    const docs = submitDocs.map(val => {
       const normalizedDoc = {
         ...val,
         pid: !val.pid && mountedId ? mountedId : val.pid,
@@ -431,6 +505,9 @@ const handleSubmit = async () => {
       message.success(t('导入成功'))
       return
     } else if (isStandalone.value && !formInfo.value.cover) {
+      if (deleteIds.length > 0) {
+        await apiNodesCache.deleteNodes(deleteIds)
+      }
       const copiedDocs = JSON.parse(JSON.stringify(docs)) as HttpNode[]
       await apiNodesCache.appendNodes(copiedDocs, projectId)
       bannerStore.getDocBanner({ projectId })
@@ -438,10 +515,13 @@ const handleSubmit = async () => {
       return
     }
     loading.value = true
-    const params = {
+    const params: Record<string, unknown> = {
       projectId,
       cover: formInfo.value.cover,
       moyuData: { ...formInfo.value.moyuData, docs },
+    }
+    if (deleteIds.length > 0) {
+      params.deleteIds = deleteIds
     }
     request
       .post('/api/project/import/moyu', params)
