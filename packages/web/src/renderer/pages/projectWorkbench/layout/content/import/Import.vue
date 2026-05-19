@@ -243,27 +243,58 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
   const strategy = duplicateStrategy.value
   if (strategy === 'add') return { filteredDocs: docs, deleteIds: [] }
 
-  const httpDocs = docs.filter((d): d is HttpNode => 'item' in d)
-  if (httpDocs.length === 0) return { filteredDocs: docs, deleteIds: [] }
+  const importHttp = docs.filter((d): d is HttpNode => 'item' in d && !d.info?.type?.startsWith('folder'))
+  const importFolders = docs.filter((d) => d.info?.type === 'folder' || (d as any).isFolder)
+  if (importHttp.length === 0 && importFolders.length === 0) return { filteredDocs: docs, deleteIds: [] }
 
-  let existingNodes: (HttpNode | FolderNode)[] = []
+  let existingNodes: Record<string, unknown>[] = []
   if (isStandalone.value) {
     existingNodes = await apiNodesCache.getNodesByProjectId(projectId)
   } else {
     const res = await request.get('/api/project/doc_tree_node', { params: { projectId } })
-    existingNodes = res.data || []
+    existingNodes = (res as any).data || []
   }
 
-  const existingHttp = existingNodes.filter((n): n is HttpNode => 'item' in n && n.item.url)
+  // 构建已有接口 URL → _id 映射
   const urlMap = new Map<string, string>()
-  for (const n of existingHttp) {
-    const key = normalizeUrl(n.item.url.prefix || n.item.url.host || '', n.item.url.path)
-    urlMap.set(`${n.item.method}:${key}`, n._id)
+  for (const n of existingNodes) {
+    const isFolder = (n as any).isFolder || (n as any).type === 'folder'
+    if (isFolder) continue
+    const method = ((n as any).method || '').toUpperCase()
+    let path = ''
+    // doc_tree_node 返回的 url 是字符串（仅 path）
+    if (typeof (n as any).url === 'string') {
+      path = (n as any).url as string
+    } else if ((n as any).item?.url) {
+      path = (n as any).item.url.path || ''
+    }
+    const key = normalizeUrl('', path)
+    urlMap.set(`${method}:${key}`, (n as any)._id)
+  }
+
+  // 构建已有文件夹名称 → _id 映射
+  const folderNameMap = new Map<string, string>()
+  for (const n of existingNodes) {
+    const isFolder = (n as any).isFolder || (n as any).type === 'folder'
+    if (!isFolder) continue
+    const name = ((n as any).name || '').trim()
+    if (name) folderNameMap.set(name, (n as any)._id)
   }
 
   const deleteIds: string[] = []
   const filteredDocs: (HttpNode | FolderNode)[] = []
   for (const doc of docs) {
+    const isFolder = doc.info?.type === 'folder' || (doc as any).isFolder
+    if (isFolder) {
+      const name = (doc.info?.name || '').trim()
+      const existingId = folderNameMap.get(name)
+      if (existingId) {
+        if (strategy === 'skip') continue
+        if (strategy === 'overwrite') deleteIds.push(existingId)
+      }
+      filteredDocs.push(doc)
+      continue
+    }
     if (!('item' in doc)) {
       filteredDocs.push(doc)
       continue
