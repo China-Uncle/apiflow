@@ -296,13 +296,18 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
 
   const deleteIds: string[] = []
   const filteredDocs: (HttpNode | FolderNode)[] = []
+  // 记录被跳过的文件夹 oldId → 已存在的 _id
+  const skippedFolderPidMap = new Map<string, string>()
   for (const doc of docs) {
     const isFolder = doc.info?.type === 'folder' || (doc as any).isFolder
     if (isFolder) {
       const name = (doc.info?.name || '').trim()
       const existingId = folderNameMap.get(name)
       if (existingId) {
-        if (strategy === 'skip') continue
+        if (strategy === 'skip') {
+          skippedFolderPidMap.set(doc._id, existingId)
+          continue
+        }
         if (strategy === 'overwrite') deleteIds.push(existingId)
       }
       filteredDocs.push(doc)
@@ -320,6 +325,10 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
     if (existingId) {
       if (strategy === 'skip') continue
       if (strategy === 'overwrite') deleteIds.push(existingId)
+    }
+    // 如果子接口的 pid 指向被跳过的文件夹，更新为已存在的文件夹 _id
+    if (httpDoc.pid && skippedFolderPidMap.has(httpDoc.pid)) {
+      httpDoc.pid = skippedFolderPidMap.get(httpDoc.pid)!
     }
     filteredDocs.push(doc)
   }
