@@ -254,32 +254,46 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
     const res = await request.get('/api/project/doc_tree_node', { params: { projectId } })
     existingNodes = (res as any).data || []
   }
+  console.log('[dedupDocs] projectId:', projectId, 'isStandalone:', isStandalone.value, 'existingNodes count:', existingNodes.length)
+  console.log('[dedupDocs] urlMap size:', urlMap.size, 'keys:', [...urlMap.keys()])
 
-  // 构建已有接口 URL → _id 映射
+  // 构建已有接口 URL → _id 映射（递归遍历树结构）
   const urlMap = new Map<string, string>()
-  for (const n of existingNodes) {
-    const isFolder = (n as any).isFolder || (n as any).type === 'folder'
-    if (isFolder) continue
-    const method = ((n as any).method || '').toUpperCase()
-    let path = ''
-    // doc_tree_node 返回的 url 是字符串（仅 path）
-    if (typeof (n as any).url === 'string') {
-      path = (n as any).url as string
-    } else if ((n as any).item?.url) {
-      path = (n as any).item.url.path || ''
+  const walkTree = (nodes: Record<string, unknown>[]) => {
+    for (const n of nodes) {
+      const isFolder = (n as any).isFolder || (n as any).type === 'folder'
+      if (isFolder) {
+        const children = (n as any).children as Record<string, unknown>[] | undefined
+        if (children) walkTree(children)
+        continue
+      }
+      const method = ((n as any).method || '').toUpperCase()
+      let path = ''
+      if (typeof (n as any).url === 'string') {
+        path = (n as any).url as string
+      } else if ((n as any).item?.url) {
+        path = (n as any).item.url.path || ''
+      }
+      const key = normalizeUrl('', path)
+      urlMap.set(`${method}:${key}`, (n as any)._id)
     }
-    const key = normalizeUrl('', path)
-    urlMap.set(`${method}:${key}`, (n as any)._id)
   }
+  walkTree(existingNodes)
+  console.log('[dedupDocs] existingNodeCount:', existingNodes.length, 'urlMap size:', urlMap.size, 'keys:', [...urlMap.keys()])
 
-  // 构建已有文件夹名称 → _id 映射
+  // 构建已有文件夹名称 → _id 映射（递归遍历树结构）
   const folderNameMap = new Map<string, string>()
-  for (const n of existingNodes) {
-    const isFolder = (n as any).isFolder || (n as any).type === 'folder'
-    if (!isFolder) continue
-    const name = ((n as any).name || '').trim()
-    if (name) folderNameMap.set(name, (n as any)._id)
+  const walkFolders = (nodes: Record<string, unknown>[]) => {
+    for (const n of nodes) {
+      const isFolder = (n as any).isFolder || (n as any).type === 'folder'
+      if (!isFolder) continue
+      const name = ((n as any).name || '').trim()
+      if (name) folderNameMap.set(name, (n as any)._id)
+      const children = (n as any).children as Record<string, unknown>[] | undefined
+      if (children) walkFolders(children)
+    }
   }
+  walkFolders(existingNodes)
 
   const deleteIds: string[] = []
   const filteredDocs: (HttpNode | FolderNode)[] = []
@@ -302,7 +316,6 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
     const httpDoc = doc as HttpNode
     const key = normalizeUrl(httpDoc.item.url.prefix || '', httpDoc.item.url.path)
     const mapKey = `${httpDoc.item.method.toUpperCase()}:${key}`
-    // 也尝试不带 prefix 匹配（doc_tree_node 返回的 url 不包含 prefix）
     const pathOnlyKey = `${httpDoc.item.method.toUpperCase()}:${normalizeUrl('', httpDoc.item.url.path)}`
     const existingId = urlMap.get(mapKey) || urlMap.get(pathOnlyKey)
     if (existingId) {
@@ -311,6 +324,7 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
     }
     filteredDocs.push(doc)
   }
+  console.log('[dedupDocs] filteredDocCount:', filteredDocs.length, 'deleteIdCount:', deleteIds.length)
   return { filteredDocs, deleteIds }
 }
 // 表单信息
@@ -556,16 +570,13 @@ const handleSubmit = async () => {
     if (deleteIds.length > 0) {
       params.deleteIds = deleteIds
     }
-    request
-      .post('/api/project/import/moyu', params)
-      .then(() => {
-        bannerStore.getDocBanner({ projectId })
-        message.success(t('导入成功'))
-      })
-      .catch(() => {})
-      .finally(() => {
-        loading.value = false
-      })
+    try {
+      await request.post('/api/project/import/moyu', params)
+      bannerStore.getDocBanner({ projectId })
+      message.success(t('导入成功'))
+    } finally {
+      loading.value = false
+    }
   } catch (error) {
     message.warning((error as Error).message)
     loading.value = false
