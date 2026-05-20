@@ -255,7 +255,6 @@ const dedupDocs = async (docs: (HttpNode | FolderNode)[]): Promise<{
     existingNodes = (res as any).data || []
   }
   console.log('[dedupDocs] projectId:', projectId, 'isStandalone:', isStandalone.value, 'existingNodes count:', existingNodes.length)
-  console.log('[dedupDocs] urlMap size:', urlMap.size, 'keys:', [...urlMap.keys()])
 
   // 构建已有接口 URL → _id 映射（递归遍历树结构）
   const urlMap = new Map<string, string>()
