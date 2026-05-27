@@ -79,6 +79,10 @@ const shareId = (() => {
   const urlParams = new URLSearchParams(window.location.search);
   return urlParams.get('share_id') || 'local_share';
 })();
+const docIdFromUrl = (() => {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('docId') || '';
+})();
 const hasPermission = ref(false);
 const loading = ref(false); //获取分享信息loading
 const expireCountdown = ref('')
@@ -94,7 +98,7 @@ const passwordRules = ref({
   ]
 })
 const shareStore = useShareStore();
-const { project: shareProjectInfo, docs, tabs } = storeToRefs(shareStore);
+const { project: shareProjectInfo, docs, tabs, banner } = storeToRefs(shareStore);
 /*
 |--------------------------------------------------------------------------
 | 初始化数据获取逻辑
@@ -157,6 +161,7 @@ const getSharedProjectInfo = async () => {
       }
     } else {
       hasPermission.value = true;
+      // 需要等 banner 通过其他方式加载
     }
     loading.value = false;
   } catch (error) {
@@ -234,6 +239,41 @@ watch([() => tabs.value[shareId], () => hasPermission.value],
   },
   { immediate: true, deep: true }
 );
+
+// 监听 banner 加载完成，自动选中 URL 中的 docId
+watch(() => banner.value.length, () => {
+  if (!docIdFromUrl || banner.value.length === 0) return
+  autoSelectDocFromUrl()
+})
+// 从 banner 中递归查找节点
+const findNodeInTree = (tree: ApidocBanner[], id: string): ApidocBanner | null => {
+  for (const node of tree) {
+    if (node._id === id) return node
+    if (node.children?.length) {
+      const found = findNodeInTree(node.children, id)
+      if (found) return found
+    }
+  }
+  return null
+}
+// 自动选中 URL 中的 docId
+const autoSelectDocFromUrl = () => {
+  const node = findNodeInTree(banner.value, docIdFromUrl)
+  if (!node) return
+  shareStore.addTab({
+    _id: node._id,
+    projectId: shareId,
+    tabType: node.type || 'http',
+    label: node.name,
+    saved: true,
+    fixed: false,
+    selected: true,
+    head: {
+      icon: (node as any).method || node.type || '',
+      color: '',
+    },
+  })
+}
 
 /*
 |--------------------------------------------------------------------------

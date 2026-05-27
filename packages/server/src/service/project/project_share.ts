@@ -110,7 +110,7 @@ export class ProjectShareService {
    */
   async getSharedLinkInfo(params: GetSharedLinkInfoDto) {
     const { shareId } = params;
-    const result = await this.projectShareModel.findOne({ shareId, isEnabled: true }, { projectName: 1, shareName: 1, expire: 1, password: 1 }).lean();
+    const result = await this.projectShareModel.findOne({ shareId, isEnabled: true }, { projectName: 1, shareName: 1, expire: 1, password: 1, projectId: 1, selectedDocs: 1 }).lean();
     if (!result) {
       throwError(1020, '文档不存在')
     }
@@ -119,6 +119,8 @@ export class ProjectShareService {
       shareName: result.shareName,
       expire: result.expire,
       needPassword: !!result.password,
+      projectId: result.projectId,
+      selectedDocs: result.selectedDocs || [],
     };
   }
   /**
@@ -174,7 +176,11 @@ export class ProjectShareService {
     if (!valid) {
       throwError(1023, '无效的的id和密码')
     }
-    const result = await this.docService.getDocsAsTree({ projectId: sharedProjectInfo.projectId }, true);
+    let result = await this.docService.getDocsAsTree({ projectId: sharedProjectInfo.projectId }, true);
+    const selectedDocs = sharedProjectInfo.selectedDocs || [];
+    if (selectedDocs.length > 0) {
+      result = this.filterTreeByDocIds(result, selectedDocs);
+    }
     return result;
   }
   /**
@@ -270,10 +276,31 @@ export class ProjectShareService {
       { projectId: projectShare.projectId, isEnabled: true },
       { name: 1, type: 1, value: 1, fileValue: 1 }
     );
-    const banner = await this.docService.getDocsAsTree({ projectId: projectShare.projectId }, true);
+    let banner = await this.docService.getDocsAsTree({ projectId: projectShare.projectId }, true);
+    const selectedDocs = projectShare.selectedDocs || [];
+    if (selectedDocs.length > 0) {
+      banner = this.filterTreeByDocIds(banner, selectedDocs);
+    }
     return {
       variables,
       banner
     };
+  }
+  /**
+   * 根据 docId 列表过滤树结构
+   */
+  private filterTreeByDocIds(tree: any[], docIds: string[]): any[] {
+    return tree.reduce((acc: any[], node: any) => {
+      const idStr = node._id?.toString?.() || node._id || '';
+      if (node.children?.length) {
+        const filteredChildren = this.filterTreeByDocIds(node.children, docIds);
+        if (filteredChildren.length > 0) {
+          acc.push({ ...node, children: filteredChildren });
+        }
+      } else if (docIds.includes(idStr)) {
+        acc.push(node);
+      }
+      return acc;
+    }, []);
   }
 }
